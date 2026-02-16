@@ -1,5 +1,5 @@
 pyTelegramBotAPI==4.14.0
-google-generativeai==0.8.3  ← Обновлено
+google-generativeai==0.8.3
 flask==3.0.0
 requests==2.31.0
-Pillow==11.0.0  ← Обновлено для Python 3.14
+Pillow==11.0.0
