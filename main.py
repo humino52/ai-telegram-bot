@@ -1,54 +1,46 @@
 import os
 import telebot
 import google.generativeai as genai
-from keep_alive import keep_alive
 import time
 import requests
 import io
 from PIL import Image
+from flask import Flask, request
 
 # ========================================
-# 🔑 НАСТРОЙКИ - ИЗМЕНИ НА СВОЁ!
+# 🔑 НАСТРОЙКИ - токены берутся из Environment Variables
 # ========================================
 
-# ВАРИАНТ 1: Вставь токены прямо сюда (не рекомендуется!)
-# TELEGRAM_TOKEN = "8271375613:AAEkkfH2wA50EvFjIAfgrSjJIo3Cd-DoS_s"  # ИЗМЕНИ НА СВОЙ ТОКЕН ОТ @BotFather
-# GOOGLE_API_KEY = "AIzaSyAMaGlpRIeiTJvE5a8JmacufpnRT2UfyB0"  # ИЗМЕНИ НА СВОЙ КЛЮЧ ОТ Google
-
-# ВАРИАНТ 2: Через Secrets на Replit (рекомендуется!)
-# Tools → Secrets → добавь TELEGRAM_BOT_TOKEN и GOOGLE_API_KEY
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')  # Берёт из Secrets
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')  # Берёт из Secrets
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
+WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL')  # Автоматически на Render
 
 # ========================================
 # 🎨 ПЕРСОНАЛИЗАЦИЯ (можно менять)
 # ========================================
 
-# Стандартная личность бота
 DEFAULT_PERSONALITY = {
-    "name": "AI Ассистент",  # ИЗМЕНИ: Имя бота
-    "role": "Я умный помощник, который отвечает на вопросы, анализирует изображения и помогает с задачами.",  # ИЗМЕНИ: Роль
-    "style": "дружелюбный и полезный",  # ИЗМЕНИ: Стиль общения
-    "language": "русский"  # ИЗМЕНИ: Язык (english, spanish и т.д.)
+    "name": "AI Ассистент",
+    "role": "Я умный помощник, который отвечает на вопросы, анализирует изображения и помогает с задачами.",
+    "style": "дружелюбный и полезный",
+    "language": "русский"
 }
 
 # ========================================
-# ⚙️ ИНИЦИАЛИЗАЦИЯ (НЕ ТРОГАЙ!)
+# ⚙️ ИНИЦИАЛИЗАЦИЯ
 # ========================================
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# Модели
 text_model = genai.GenerativeModel('gemini-pro')
 vision_model = genai.GenerativeModel('gemini-pro-vision')
 
-# Хранилища
 active_chats = {}
 bot_personalities = {}
 user_settings = {}
 
-# Готовые шаблоны личностей
 PERSONALITY_TEMPLATES = {
     "assistant": {
         "name": "Помощник",
@@ -82,7 +74,6 @@ PERSONALITY_TEMPLATES = {
 # ========================================
 
 def get_personality_prompt(chat_id):
-    """Получить промпт с личностью для чата"""
     personality = bot_personalities.get(chat_id, DEFAULT_PERSONALITY)
     return f"""Ты - {personality['name']}. 
 {personality['role']}
@@ -90,11 +81,54 @@ def get_personality_prompt(chat_id):
 Отвечай на языке: {personality['language']}."""
 
 def create_chat_with_personality(chat_id):
-    """Создать чат с учетом личности"""
     personality_prompt = get_personality_prompt(chat_id)
     chat = text_model.start_chat(history=[])
     chat.send_message(f"[SYSTEM] {personality_prompt}")
     return chat
+
+# ========================================
+# 🌐 FLASK ROUTES (для webhook)
+# ========================================
+
+@app.route('/')
+def index():
+    return """
+    <html>
+    <head>
+        <title>AI Bot</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .status { font-size: 2em; margin: 20px; }
+        </style>
+    </head>
+    <body>
+        <h1>🤖 AI Bot is Running!</h1>
+        <div class="status">✅ Status: ACTIVE</div>
+        <p>🔗 Webhook Mode ON</p>
+        <p>💚 Google Gemini Connected</p>
+    </body>
+    </html>
+    """
+
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def webhook():
+    """Обработка входящих сообщений от Telegram"""
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    return '', 403
+
+@app.route('/health')
+def health():
+    return {'status': 'ok', 'mode': 'webhook'}, 200
 
 # ========================================
 # 📝 КОМАНДЫ БОТА
@@ -122,7 +156,6 @@ def send_welcome(message):
    • Генерация изображений по описанию
    
 📁 **Обработка файлов**
-   • PDF документы
    • Текстовые файлы
    • Код файлы
    
@@ -140,21 +173,15 @@ def send_welcome(message):
 /help - Подробная помощь
 /status - Моя настройка
 
-━━━━━━━━━━━━━━━━━━━━━
-🎯 **Попробуй:**
-• Отправь фото - я опишу его
-• Напиши "/generate космический корабль" 
-• Просто задай вопрос
-
-💡 Добавь меня в группу!
+💡 Попробуй отправить фото или просто задай вопрос!
         """
     else:
         welcome_text = f"""
 🤖 Привет! Я добавлен в группу!
 
-Упомяни меня: @{bot.get_me().username} <вопрос>
+Упоминай меня: @{bot.get_me().username} <вопрос>
 
-⚙️ Админы: /personality - настроить личность
+⚙️ Админы могут настроить через /personality
 
 Команды:
 /status - Моя роль
@@ -198,11 +225,7 @@ def setup_personality(message):
         callback_data="personality_custom"
     ))
     
-    bot.send_message(
-        chat_id,
-        "🎭 Выбери личность для бота:",
-        reply_markup=markup
-    )
+    bot.send_message(chat_id, "🎭 Выбери личность для бота:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('personality_'))
 def personality_callback(call):
@@ -212,9 +235,9 @@ def personality_callback(call):
     if personality_key == 'custom':
         user_settings[call.from_user.id] = {'waiting_for': 'custom_personality'}
         bot.edit_message_text(
-            "✏️ Опиши личность бота.\n\n"
+            "✏️ Опиши желаемую личность бота.\n\n"
             "Например:\n"
-            "• Ты программист, помогаешь с кодом\n"
+            "• Ты программист, который помогает с кодом\n"
             "• Ты фитнес тренер\n"
             "• Ты психолог\n\n"
             "Отправь описание:",
@@ -237,9 +260,7 @@ def personality_callback(call):
 
 @bot.message_handler(commands=['status'])
 def show_status(message):
-    chat_id = message.chat.id
-    personality = bot_personalities.get(chat_id, DEFAULT_PERSONALITY)
-    
+    personality = bot_personalities.get(message.chat.id, DEFAULT_PERSONALITY)
     status_text = f"""
 📊 **Текущая конфигурация:**
 
@@ -248,9 +269,9 @@ def show_status(message):
 💬 Стиль: {personality['style']}
 🌐 Язык: {personality.get('language', 'русский')}
 
-/personality - изменить
+Измени через /personality
     """
-    bot.send_message(chat_id, status_text, parse_mode='Markdown')
+    bot.send_message(message.chat.id, status_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['generate'])
 def generate_image(message):
@@ -264,25 +285,23 @@ def generate_image(message):
     bot.send_chat_action(chat_id, 'upload_photo')
     
     try:
-        status_msg = bot.send_message(chat_id, "🎨 Генерирую...")
+        status_msg = bot.send_message(chat_id, "🎨 Генерирую изображение...")
         
-        # Переводим на английский
         if chat_id not in active_chats:
             active_chats[chat_id] = create_chat_with_personality(chat_id)
         
         translation = active_chats[chat_id].send_message(
-            f"Переведи на английский для генерации изображения: {prompt}"
+            f"Переведи на английский кратко для генерации изображения: {prompt}"
         )
         english_prompt = translation.text.strip()
         
-        # Генерируем через бесплатный API
         image_url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(english_prompt)}?width=1024&height=1024&nologo=true"
         
         bot.delete_message(chat_id, status_msg.message_id)
         bot.send_photo(
             chat_id,
             image_url,
-            caption=f"🎨 **{prompt}**\n🌐 {english_prompt}",
+            caption=f"🎨 **{prompt}**\n🌐 EN: {english_prompt}",
             parse_mode='Markdown'
         )
         
@@ -291,16 +310,14 @@ def generate_image(message):
 
 @bot.message_handler(commands=['clear'])
 def clear_chat(message):
-    chat_id = message.chat.id
-    active_chats[chat_id] = create_chat_with_personality(chat_id)
-    bot.send_message(chat_id, "🗑️ История очищена!")
+    active_chats[message.chat.id] = create_chat_with_personality(message.chat.id)
+    bot.send_message(message.chat.id, "🗑️ История очищена!")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     help_text = """
 📖 **Руководство:**
 
-━━━━━━━━━━━━━━━━━━━━━
 **💬 Общение**
 Просто пиши - я отвечу!
 
@@ -309,22 +326,21 @@ def send_help(message):
 🎨 /generate <описание> → создам картинку
 
 **📁 Файлы**
-Отправь .txt, .py, .js файл → я прочитаю
+Отправь .txt, .py, .js → я прочитаю
 
 **🎭 Личность**
-/personality → выбери стиль общения
+/personality → выбери стиль
 
 **👥 В группах**
-Упомяни @botname для ответа
+Упомяни @botname
 
-━━━━━━━━━━━━━━━━━━━━━
 **Команды:**
 /start - Меню
 /personality - Настройка
-/generate - Создать изображение
-/status - Моя настройка
-/clear - Очистить историю
-/help - Эта помощь
+/generate - Генерация
+/status - Конфигурация
+/clear - Очистить
+/help - Помощь
 
 🆓 Полностью бесплатно!
     """
@@ -348,8 +364,6 @@ def handle_photo(message):
         caption = message.caption or "Что на этом изображении? Опиши подробно."
         
         response = vision_model.generate_content([caption, image])
-        
-        # ОТПРАВЛЯЕМ БЕЗ REPLY
         bot.send_message(chat_id, f"🖼️ **Анализ:**\n\n{response.text}", parse_mode='Markdown')
         
     except Exception as e:
@@ -382,17 +396,13 @@ def handle_document(message):
             
             prompt = f"Файл {file_name}:\n\n{content}\n\nОпиши содержание файла."
             
+            if chat_id not in active_chats:
+                active_chats[chat_id] = create_chat_with_personality(chat_id)
+            
+            response = active_chats[chat_id].send_message(prompt)
+            bot.send_message(chat_id, f"📁 **{file_name}:**\n\n{response.text}", parse_mode='Markdown')
         else:
             bot.send_message(chat_id, f"❌ Формат .{file_extension} не поддерживается.\n\nПоддерживаются: .txt, .md, .py, .js, .json")
-            return
-        
-        if chat_id not in active_chats:
-            active_chats[chat_id] = create_chat_with_personality(chat_id)
-        
-        response = active_chats[chat_id].send_message(prompt)
-        
-        # ОТПРАВЛЯЕМ БЕЗ REPLY
-        bot.send_message(chat_id, f"📁 **{file_name}:**\n\n{response.text}", parse_mode='Markdown')
         
     except Exception as e:
         bot.send_message(chat_id, f"❌ Ошибка: {str(e)}")
@@ -401,13 +411,12 @@ def handle_document(message):
 # 💬 ОБРАБОТКА ТЕКСТА
 # ========================================
 
-@bot.message_handler(func=lambda message: True, content_types=['text'])
+@bot.message_handler(func=lambda m: True, content_types=['text'])
 def handle_text(message):
     chat_id = message.chat.id
     chat_type = message.chat.type
     user_text = message.text
     
-    # Проверка кастомной настройки
     if message.from_user.id in user_settings:
         if user_settings[message.from_user.id].get('waiting_for') == 'custom_personality':
             bot_personalities[chat_id] = {
@@ -418,12 +427,9 @@ def handle_text(message):
             }
             active_chats[chat_id] = create_chat_with_personality(chat_id)
             del user_settings[message.from_user.id]
-            
-            # ОТПРАВЛЯЕМ БЕЗ REPLY
             bot.send_message(chat_id, f"✅ Кастомная личность установлена!\n\n📝 {user_text}")
             return
     
-    # В группах только на упоминания
     if chat_type != 'private':
         bot_username = bot.get_me().username
         if f"@{bot_username}" not in user_text and not message.reply_to_message:
@@ -437,41 +443,33 @@ def handle_text(message):
             active_chats[chat_id] = create_chat_with_personality(chat_id)
         
         response = active_chats[chat_id].send_message(user_text)
-        
-        # ОТПРАВЛЯЕМ БЕЗ REPLY - ПРОСТО КАК ОБЫЧНОЕ СООБЩЕНИЕ
         bot.send_message(chat_id, response.text)
         
     except Exception as e:
         bot.send_message(chat_id, f"❌ Ошибка: {str(e)}")
-        print(f"Error: {e}")
 
 # ========================================
-# 🚀 ЗАПУСК БОТА
+# 🚀 ЗАПУСК
 # ========================================
-
-def main():
-    print("=" * 60)
-    print("🚀 AI-БОТ ЗАПУЩЕН!")
-    print("=" * 60)
-    print("✅ Google Gemini подключен")
-    print("✅ Telegram Bot готов")
-    print("✅ Анализ изображений: ВКЛ")
-    print("✅ Генерация изображений: ВКЛ")
-    print("✅ Обработка файлов: ВКЛ")
-    print("✅ Настройка личности: ВКЛ")
-    print("✅ Работа в группах: ВКЛ")
-    print("=" * 60)
-    
-    keep_alive()
-    
-    while True:
-        try:
-            print("📡 Получаю сообщения...")
-            bot.polling(none_stop=True, interval=0, timeout=60)
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            time.sleep(5)
-            print("♻️ Перезапуск...")
 
 if __name__ == '__main__':
-    main()
+    print("=" * 60)
+    print("🚀 AI-БОТ ЗАПУЩЕН (WEBHOOK MODE)")
+    print("=" * 60)
+    
+    # Удаляем старый webhook
+    bot.remove_webhook()
+    time.sleep(1)
+    
+    # Устанавливаем новый webhook
+    webhook_url = f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
+    bot.set_webhook(url=webhook_url)
+    
+    print(f"✅ Webhook: {webhook_url}")
+    print("✅ Google Gemini: подключен")
+    print("✅ Бот готов!")
+    print("=" * 60)
+    
+    # Запускаем Flask на порту 8080
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
